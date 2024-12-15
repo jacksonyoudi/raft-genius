@@ -30,7 +30,6 @@ func TestGOB(t *testing.T) {
 
 	Register(T3{})
 
-	//  需要保证写入顺序 与读取顺序是相同的.
 	{
 		x0 := 0
 		x1 := 1
@@ -43,7 +42,6 @@ func TestGOB(t *testing.T) {
 		t2.T2map[99] = &T1{1, 2, "x", "y"}
 		t2.T2t3 = T3{999}
 
-		// encode是 向 buffer中写入数据
 		e := NewEncoder(w)
 		e.Encode(x0)
 		e.Encode(x1)
@@ -59,7 +57,6 @@ func TestGOB(t *testing.T) {
 		var t2 T2
 
 		r := bytes.NewBuffer(data)
-		// decode 从reader中读取数据
 		d := NewDecoder(r)
 		if d.Decode(&x0) != nil ||
 			d.Decode(&x1) != nil ||

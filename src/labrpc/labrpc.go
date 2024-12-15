@@ -1,5 +1,54 @@
 package labrpc
 
+//
+// channel-based RPC, for 6.5840 labs.
+//
+// simulates a network that can lose requests, lose replies,
+// delay messages, and entirely disconnect particular hosts.
+//
+// we will use the original labrpc.go to test your code for grading.
+// so, while you can modify this code to help you debug, please
+// test against the original before submitting.
+//
+// adapted from Go net/rpc/server.go.
+//
+// sends labgob-encoded values to ensure that RPCs
+// don't include references to program objects.
+//
+// net := MakeNetwork() -- holds network, clients, servers.
+// end := net.MakeEnd(endname) -- create a client end-point, to talk to one server.
+// net.AddServer(servername, server) -- adds a named server to network.
+// net.DeleteServer(servername) -- eliminate the named server.
+// net.Connect(endname, servername) -- connect a client to a server.
+// net.Enable(endname, enabled) -- enable/disable a client.
+// net.Reliable(bool) -- false means drop/delay messages
+//
+// end.Call("Raft.AppendEntries", &args, &reply) -- send an RPC, wait for reply.
+// the "Raft" is the name of the server struct to be called.
+// the "AppendEntries" is the name of the method to be called.
+// Call() returns true to indicate that the server executed the request
+// and the reply is valid.
+// Call() returns false if the network lost the request or reply
+// or the server is down.
+// It is OK to have multiple Call()s in progress at the same time on the
+// same ClientEnd.
+// Concurrent calls to Call() may be delivered to the server out of order,
+// since the network may re-order messages.
+// Call() is guaranteed to return (perhaps after a delay) *except* if the
+// handler function on the server side does not return.
+// the server RPC handler function must declare its args and reply arguments
+// as pointers, so that their types exactly match the types of the arguments
+// to Call().
+//
+// srv := MakeServer()
+// srv.AddService(svc) -- a server can have multiple services, e.g. Raft and k/v
+//   pass srv to net.AddServer()
+//
+// svc := MakeService(receiverObject) -- obj's methods will handle RPCs
+//   much like Go's rpcs.Register()
+//   pass svc to srv.AddService()
+//
+
 import (
 	"bytes"
 	"course/labgob"
@@ -12,7 +61,6 @@ import (
 	"time"
 )
 
-// 定义 请求信息的结构
 type reqMsg struct {
 	endname  interface{} // name of sending ClientEnd
 	svcMeth  string      // e.g. "Raft.AppendEntries"
@@ -21,13 +69,11 @@ type reqMsg struct {
 	replyCh  chan replyMsg
 }
 
-// 响应的信息的结构体
 type replyMsg struct {
 	ok    bool
 	reply []byte
 }
 
-// 客户端 endpoint
 type ClientEnd struct {
 	endname interface{}   // this end-point's name
 	ch      chan reqMsg   // copy of Network.endCh
@@ -37,10 +83,7 @@ type ClientEnd struct {
 // send an RPC, wait for the reply.
 // the return value indicates success; false means that
 // no reply was received from the server.
-// 发送一个 call，等待回复, 返回的数据赋值在 reply上
 func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bool {
-
-	// 构造请求体
 	req := reqMsg{}
 	req.endname = e.endname
 	req.svcMeth = svcMeth
@@ -55,7 +98,7 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	req.args = qb.Bytes()
 
 	//
-	// send the request. 将 请求发送给 client的 chanel, 异步处理这些请求
+	// send the request.
 	//
 	select {
 	case e.ch <- req:
@@ -67,7 +110,6 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 
 	//
 	// wait for the reply.
-	// 这里阻塞等待 返回
 	//
 	rep := <-req.replyCh
 	if rep.ok {
@@ -82,9 +124,8 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	}
 }
 
-// 定义网络
 type Network struct {
-	mu             sync.Mutex // 并发保护
+	mu             sync.Mutex
 	reliable       bool
 	longDelays     bool                        // pause a long time on send on disabled connection
 	longReordering bool                        // sometimes delay replies a long time
@@ -271,7 +312,6 @@ func (rn *Network) processReq(req reqMsg) {
 
 // create a client end-point.
 // start the thread that listens and delivers.
-// 创建一个 client 端点
 func (rn *Network) MakeEnd(endname interface{}) *ClientEnd {
 	rn.mu.Lock()
 	defer rn.mu.Unlock()
@@ -332,7 +372,6 @@ func (rn *Network) GetCount(servername interface{}) int {
 }
 
 func (rn *Network) GetTotalCount() int {
-	// 原子操作
 	x := atomic.LoadInt32(&rn.count)
 	return int(x)
 }
