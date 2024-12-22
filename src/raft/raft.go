@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	//	"bytes"
+
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,10 +29,10 @@ import (
 )
 
 const (
-	electionTimeoutMin = 250 * time.Millisecond
-	electionTimeoutMax = 500 * time.Millisecond
+	electionTimeoutMin time.Duration = 250 * time.Millisecond
+	electionTimeoutMax time.Duration = 400 * time.Millisecond
 
-	replicateInterval time.Duration = 200 * time.Millisecond
+	replicateInterval time.Duration = 70 * time.Millisecond
 )
 
 type Role string
@@ -77,10 +79,10 @@ type Raft struct {
 	currentTerm int
 	votedFor    int // -1 means vote for none
 
-	// log in the peer's local
+	// log in the Peer's local
 	log []LogEntry
 
-	// only used in leader
+	// only used in Leader
 	// every peer's view
 	nextIndex  []int
 	matchIndex []int
@@ -93,24 +95,19 @@ type Raft struct {
 
 	electionStart   time.Time
 	electionTimeout time.Duration // random
-
 }
 
 func (rf *Raft) becomeFollowerLocked(term int) {
-	// todo no lock
 	if term < rf.currentTerm {
-		// errlog
 		LOG(rf.me, rf.currentTerm, DError, "Can't become Follower, lower term: T%d", term)
 		return
 	}
-	//  self -> follower,  term from currentTerm to leader term
-	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower, For T%s->T%s", rf.role, rf.currentTerm, term)
+
+	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower, For T%v->T%v", rf.role, rf.currentTerm, term)
 	rf.role = Follower
 	if term > rf.currentTerm {
-		// non vote follow leader, so
 		rf.votedFor = -1
 	}
-
 	rf.currentTerm = term
 }
 
@@ -119,6 +116,7 @@ func (rf *Raft) becomeCandidateLocked() {
 		LOG(rf.me, rf.currentTerm, DError, "Leader can't become Candidate")
 		return
 	}
+
 	LOG(rf.me, rf.currentTerm, DVote, "%s->Candidate, For T%d", rf.role, rf.currentTerm+1)
 	rf.currentTerm++
 	rf.role = Candidate
@@ -130,9 +128,9 @@ func (rf *Raft) becomeLeaderLocked() {
 		LOG(rf.me, rf.currentTerm, DError, "Only Candidate can become Leader")
 		return
 	}
+
 	LOG(rf.me, rf.currentTerm, DLeader, "Become Leader in T%d", rf.currentTerm)
 	rf.role = Leader
-
 	for peer := 0; peer < len(rf.peers); peer++ {
 		rf.nextIndex[peer] = len(rf.log)
 		rf.matchIndex[peer] = 0
@@ -142,7 +140,6 @@ func (rf *Raft) becomeLeaderLocked() {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
 	// Your code here (PartA).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -221,6 +218,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:         rf.currentTerm,
 	})
 	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+
 	return len(rf.log) - 1, rf.currentTerm, true
 }
 
@@ -268,12 +266,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.votedFor = -1
 
-	// a dummy entry to avoid lots of corner checks
+	// a dummy entry to aovid lots of corner checks
 	rf.log = append(rf.log, LogEntry{})
 
 	// initialize the leader's view slice
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
 
 	// initialize the fields used for apply
 	rf.applyCh = applyCh
