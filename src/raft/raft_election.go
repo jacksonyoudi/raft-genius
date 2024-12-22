@@ -8,7 +8,7 @@ import (
 func (rf *Raft) resetElectionTimerLocked() {
 	rf.electionStart = time.Now()
 	randRange := int64(electionTimeoutMax - electionTimeoutMin)
-	rf.electionTimeout = electionTimeoutMin + time.Duration(rand.Int63()%(randRange))
+	rf.electionTimeout = electionTimeoutMin + time.Duration(rand.Int63()%randRange)
 }
 
 func (rf *Raft) isElectionTimeoutLocked() bool {
@@ -31,8 +31,9 @@ func (rf *Raft) isMoreUpToDateLocked(candidateIndex, candidateTerm int) bool {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (PartA, PartB).
-	Term         int
-	CandidateId  int
+	Term        int
+	CandidateId int
+
 	LastLogIndex int
 	LastLogTerm  int
 }
@@ -48,28 +49,28 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (PartA, PartB).
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
-
 	// align the term
 	if args.Term < rf.currentTerm {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Higher term, T%d>T%d", args.CandidateId, rf.currentTerm, args.Term)
 		return
 	}
-
 	if args.Term > rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
+
 	// check for votedFor
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Already voted to S%d", args.CandidateId, rf.votedFor)
 		return
 	}
 
-	// check if candidata's last log is more up to date
+	// check if candidate's last log is more up to date
 	if rf.isMoreUpToDateLocked(args.LastLogIndex, args.LastLogTerm) {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Candidate less up-to-date", args.CandidateId)
 		return
@@ -108,7 +109,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // capitalized all field names in structs passed over RPC, and
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
-func (rf *Raft) sendRequstVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -117,9 +118,9 @@ func (rf *Raft) startElection(term int) {
 	votes := 0
 	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
 		reply := &RequestVoteReply{}
-		ok := rf.sendRequstVote(peer, args, reply)
+		ok := rf.sendRequestVote(peer, args, reply)
 
-		// handle the respone
+		// handle the reponse
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		if !ok {
@@ -176,9 +177,9 @@ func (rf *Raft) startElection(term int) {
 
 func (rf *Raft) electionTicker() {
 	for !rf.killed() {
+
 		// Your code here (PartA)
 		// Check if a leader election should be started.
-
 		rf.mu.Lock()
 		if rf.role != Leader && rf.isElectionTimeoutLocked() {
 			rf.becomeCandidateLocked()
