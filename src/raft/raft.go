@@ -18,14 +18,27 @@ package raft
 //
 
 import (
-	//	"bytes"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	//	"course/labgob"
 	"course/labrpc"
+)
+
+const (
+	electionTimeoutMin = 250 * time.Millisecond
+	electionTimeoutMax = 500 * time.Millisecond
+
+	replicateInterval time.Duration = 200 * time.Millisecond
+)
+
+type Role string
+
+const (
+	Follower  Role = "Follower"
+	Candidate Role = "Candidate"
+	Leader    Role = "Leader"
 )
 
 // as each Raft peer becomes aware that successive log entries are
@@ -60,17 +73,80 @@ type Raft struct {
 	// Your data here (PartA, PartB, PartC).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	role        Role
+	currentTerm int
+	votedFor    int // -1 means vote for none
 
+	// log in the peer's local
+	log []LogEntry
+
+	// only used in leader
+	// every peer's view
+	nextIndex  []int
+	matchIndex []int
+
+	// fields for apply loop
+	commitIndex int
+	lastApplied int
+	applyCh     chan ApplyMsg
+	applyCond   *sync.Cond
+
+	electionStart   time.Time
+	electionTimeout time.Duration // random
+
+}
+
+func (rf *Raft) becomeFollowerLocked(term int) {
+	// todo no lock
+	if term < rf.currentTerm {
+		// errlog
+		LOG(rf.me, rf.currentTerm, DError, "Can't become Follower, lower term: T%d", term)
+		return
+	}
+	//  self -> follower,  term from currentTerm to leader term
+	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower, For T%s->T%s", rf.role, rf.currentTerm, term)
+	rf.role = Follower
+	if term > rf.currentTerm {
+		// non vote follow leader, so
+		rf.votedFor = -1
+	}
+
+	rf.currentTerm = term
+}
+
+func (rf *Raft) becomeCandidateLocked() {
+	if rf.role == Leader {
+		LOG(rf.me, rf.currentTerm, DError, "Leader can't become Candidate")
+		return
+	}
+	LOG(rf.me, rf.currentTerm, DVote, "%s->Candidate, For T%d", rf.role, rf.currentTerm+1)
+	rf.currentTerm++
+	rf.role = Candidate
+	rf.votedFor = rf.me
+}
+
+func (rf *Raft) becomeLeaderLocked() {
+	if rf.role != Candidate {
+		LOG(rf.me, rf.currentTerm, DError, "Only Candidate can become Leader")
+		return
+	}
+	LOG(rf.me, rf.currentTerm, DLeader, "Become Leader in T%d", rf.currentTerm)
+	rf.role = Leader
+
+	for peer := 0; peer < len(rf.peers); peer++ {
+		rf.nextIndex[peer] = len(rf.log)
+		rf.matchIndex[peer] = 0
+	}
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	var term int
-	var isleader bool
 	// Your code here (PartA).
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm, rf.role == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -120,55 +196,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-type RequestVoteArgs struct {
-	// Your data here (PartA, PartB).
-}
-
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-type RequestVoteReply struct {
-	// Your data here (PartA).
-}
-
-// example RequestVote RPC handler.
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (PartA, PartB).
-}
-
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
-
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -182,13 +209,19 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	// Your code here (PartB).
-
-	return index, term, isLeader
+	if rf.role != Leader {
+		return 0, 0, false
+	}
+	rf.log = append(rf.log, LogEntry{
+		CommandValid: true,
+		Command:      command,
+		Term:         rf.currentTerm,
+	})
+	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+	return len(rf.log) - 1, rf.currentTerm, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -210,17 +243,8 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) ticker() {
-	for rf.killed() == false {
-
-		// Your code here (PartA)
-		// Check if a leader election should be started.
-
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-	}
+func (rf *Raft) contextLostLocked(role Role, term int) bool {
+	return !(rf.currentTerm == term && rf.role == role)
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -240,12 +264,29 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (PartA, PartB, PartC).
+	rf.role = Follower
+	rf.currentTerm = 0
+	rf.votedFor = -1
+
+	// a dummy entry to avoid lots of corner checks
+	rf.log = append(rf.log, LogEntry{})
+
+	// initialize the leader's view slice
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+
+	// initialize the fields used for apply
+	rf.applyCh = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.ticker()
+	go rf.electionTicker()
+	go rf.applicationTicker()
 
 	return rf
 }
