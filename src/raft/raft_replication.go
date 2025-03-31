@@ -5,27 +5,22 @@ import (
 	"time"
 )
 
-// add log entries according to the ApplyMsg struct
 type LogEntry struct {
-	Term         int
-	CommandValid bool
-	Command      interface{}
+	Term         int         // the log entry's term
+	CommandValid bool        // if it should be applied
+	Command      interface{} // the command should be applied to the state machine
 }
 
-// add the fields about log:
-// PrevLogIndex and PrevLogTerm is used to match the log prefix
-// Entries is used to append when match
-// LeaderCommit tells the follower to update ites own commitIndex
 type AppendEntriesArgs struct {
 	Term     int
 	LeaderId int
 
-	// userd to probe the metch point
+	// used to probe the match point
 	PrevLogIndex int
 	PrevLogTerm  int
 	Entries      []LogEntry
 
-	// used to update the Follower's commit index
+	// used to update the follower's commitIndex
 	LeaderCommit int
 }
 
@@ -34,7 +29,7 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
-// peer's callback
+// Peer's callback
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -42,13 +37,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 	reply.Success = false
 
-	// align term
+	// align the term
 	if args.Term < rf.currentTerm {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
 		return
 	}
-
-	if args.Term > rf.currentTerm {
+	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
 
@@ -57,7 +51,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log too short, Len:%d < Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
-
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Prev log not match, [%d]: T%d != T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
@@ -92,7 +85,7 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	return tmpIndexes[majorityIdx]
 }
 
-// only vaild in the given `term`
+// only valid in the given `term`
 func (rf *Raft) startReplication(term int) bool {
 	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
@@ -114,9 +107,10 @@ func (rf *Raft) startReplication(term int) bool {
 		// check context lost
 		if rf.contextLostLocked(Leader, term) {
 			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Context Lost, T%d:Leader->T%d:%s", peer, term, rf.currentTerm, rf.role)
+			return
 		}
 
-		// handle the reply
+		// hanle the reply
 		// probe the lower index if the prevLog not matched
 		if !reply.Success {
 			// go back a term
@@ -141,6 +135,7 @@ func (rf *Raft) startReplication(term int) bool {
 			rf.applyCond.Signal()
 		}
 	}
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -155,30 +150,35 @@ func (rf *Raft) startReplication(term int) bool {
 			rf.nextIndex[peer] = len(rf.log)
 			continue
 		}
+
 		prevIdx := rf.nextIndex[peer] - 1
 		prevTerm := rf.log[prevIdx].Term
+
+		tmpEntries := make([]LogEntry, len(rf.log[prevIdx+1:]))
+		copy(tmpEntries, rf.log[prevIdx+1:])
 
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIdx,
 			PrevLogTerm:  prevTerm,
-			Entries:      append([]LogEntry(nil), rf.log[prevIdx+1:]...),
+			Entries:      tmpEntries,
 			LeaderCommit: rf.commitIndex,
 		}
-
 		go replicateToPeer(peer, args)
 	}
 
 	return true
 }
 
+// could only replcate in the given term
 func (rf *Raft) replicationTicker(term int) {
 	for !rf.killed() {
 		ok := rf.startReplication(term)
 		if !ok {
 			break
 		}
+
+		time.Sleep(replicateInterval)
 	}
-	time.Sleep(replicateInterval)
 }
