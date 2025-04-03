@@ -116,7 +116,6 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 		rf.votedFor = -1
 	}
 	rf.currentTerm = term
-
 	if shouldPersit {
 		rf.persistLocked()
 	}
@@ -149,7 +148,6 @@ func (rf *Raft) becomeLeaderLocked() {
 	}
 }
 
-// 获取term下的第一个log的index
 func (rf *Raft) firstLogFor(term int) int {
 	for idx, entry := range rf.log {
 		if entry.Term == term {
@@ -172,7 +170,7 @@ func (rf *Raft) logString() string {
 			prevStart = i
 		}
 	}
-	terms += fmt.Sprintf(" [%d, %d]T%d", prevStart, len(rf.log)-1, prevTerm)
+	terms += fmt.Sprintf("[%d, %d]T%d", prevStart, len(rf.log)-1, prevTerm)
 	return terms
 }
 
@@ -219,6 +217,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:         rf.currentTerm,
 	})
 	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+	rf.persistLocked()
 
 	return len(rf.log) - 1, rf.currentTerm, true
 }
@@ -264,11 +263,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (PartA, PartB, PartC).
 	rf.role = Follower
-	rf.currentTerm = 0
+	rf.currentTerm = 1
 	rf.votedFor = -1
 
 	// a dummy entry to aovid lots of corner checks
-	rf.log = append(rf.log, LogEntry{})
+	rf.log = append(rf.log, LogEntry{Term: InvalidTerm})
 
 	// initialize the leader's view slice
 	rf.nextIndex = make([]int, len(rf.peers))
