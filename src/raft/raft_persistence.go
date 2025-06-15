@@ -32,7 +32,7 @@ func (rf *Raft) persistLocked() {
 	e.Encode(rf.votedFor)
 	rf.log.persist(e)
 	raftstate := w.Bytes()
-	rf.persister.Save(raftstate, nil)
+	rf.persister.Save(raftstate, rf.log.snapshot)
 	LOG(rf.me, rf.currentTerm, DPersist, "Persist: %v", rf.persistString())
 }
 

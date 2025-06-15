@@ -7,6 +7,7 @@ import "fmt"
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
+	// Your code here (PartD).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if index > rf.commitIndex {
@@ -55,8 +56,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Higher Term: T%d>T%d", args.LeaderId, rf.currentTerm, args.Term)
 		return
 	}
-
-	if args.Term > rf.currentTerm { // = handle the case when the peer is candidate
+	if args.Term >= rf.currentTerm { // = handle the case when the peer is candidate
 		rf.becomeFollowerLocked(args.Term)
 	}
 
@@ -65,6 +65,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Already installed: %d>%d", args.LeaderId, rf.log.snapLastIdx, args.LastIncludedIndex)
 		return
 	}
+
 	// install the snapshot in the memory/persister/app
 	rf.log.installSnapshot(args.LastIncludedIndex, args.LastIncludedTerm, args.Snapshot)
 	rf.persistLocked()

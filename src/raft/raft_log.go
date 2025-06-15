@@ -23,7 +23,7 @@ func NewLog(snapLastIdx, snapLastTerm int, snapshot []byte, entries []LogEntry) 
 		snapLastTerm: snapLastTerm,
 		snapshot:     snapshot,
 	}
-	//  set dummpy
+
 	rl.tailLog = append(rl.tailLog, LogEntry{
 		Term: snapLastTerm,
 	})
@@ -33,7 +33,6 @@ func NewLog(snapLastIdx, snapLastTerm int, snapshot []byte, entries []LogEntry) 
 }
 
 // all the functions below should be called under the protection of rf.mutex
-
 func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 	var lastIdx int
 	if err := d.Decode(&lastIdx); err != nil {
@@ -87,7 +86,7 @@ func (rl *RaftLog) last() (index, term int) {
 func (rl *RaftLog) firstFor(term int) int {
 	for idx, entry := range rl.tailLog {
 		if entry.Term == term {
-			return rl.snapLastIdx + idx
+			return idx + rl.snapLastIdx
 		} else if entry.Term > term {
 			break
 		}
@@ -99,6 +98,7 @@ func (rl *RaftLog) tail(startIdx int) []LogEntry {
 	if startIdx >= rl.size() {
 		return nil
 	}
+
 	return rl.tailLog[rl.idx(startIdx):]
 }
 
@@ -111,6 +111,7 @@ func (rl *RaftLog) appendFrom(logicPrevIndex int, entries []LogEntry) {
 	rl.tailLog = append(rl.tailLog[:rl.idx(logicPrevIndex)+1], entries...)
 }
 
+// string methods for debug
 func (rl *RaftLog) String() string {
 	var terms string
 	prevTerm := rl.snapLastTerm
@@ -132,6 +133,7 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	if index <= rl.snapLastIdx {
 		return
 	}
+
 	idx := rl.idx(index)
 
 	rl.snapLastIdx = index
@@ -139,7 +141,6 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	rl.snapshot = snapshot
 
 	// make a new log array
-
 	newLog := make([]LogEntry, 0, rl.size()-rl.snapLastIdx)
 	newLog = append(newLog, LogEntry{
 		Term: rl.snapLastTerm,
